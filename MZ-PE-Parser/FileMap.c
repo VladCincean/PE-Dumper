@@ -4,7 +4,8 @@
 DWORD
 FileMapPreinit(
 	_Out_	PFILE_MAP	pFileMap
-) {
+)
+{
 	if (NULL == pFileMap)
 	{
 		fprintf(stderr, "[ERR]. FileMapPreinit: invalid parameter.\n");
@@ -25,7 +26,8 @@ FileMapInit(
 	_Out_	PFILE_MAP	pFileMap,
 	_In_	PCHAR		szFileName,
 	_In_	BOOL		bWriteAccess
-) {
+)
+{
 	DWORD	errorCode;
 	DWORD	fileAccess;
 	DWORD	flProtect;
@@ -124,7 +126,8 @@ CleanUp:
 VOID
 FileMapDestroy(
 	_Inout_	PFILE_MAP	pFileMap
-) {
+)
+{
 	if (NULL == pFileMap)
 	{
 		fprintf(stderr, "[ERR]. FileMapDestroy: invalid parameter.\n");
