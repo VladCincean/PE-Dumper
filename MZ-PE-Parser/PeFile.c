@@ -88,17 +88,34 @@ LoadExportDirectory(
 		return ERROR_INVALID_PARAMETER;
 	}
 	
-	// export section RVA
 	exportDirectoryRva = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
-
-	// find file offset for export section RVA
 	exportDirectoryOffset = OffsetFromRva(pPeFile, exportDirectoryRva);
-
-	// init pExportDirectory
 	pPeFile->pExportDirectory = (PIMAGE_EXPORT_DIRECTORY)exportDirectoryOffset;
-
-	// init exportDirectorySize
 	pPeFile->exportDirectorySize = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].Size;
+
+	return ERROR_SUCCESS;
+}
+
+static DWORD
+LoadImportDirectory(
+	_Inout_	PPE_FILE	pPeFile
+)
+{
+	DWORD	importDirectoryRva;
+	PBYTE	importDirectoryOffset;
+
+	if (NULL == pPeFile)
+	{
+		fprintf(stderr, "[ERR]. LoadImportDirectory: invalid parameter.\n");
+		return ERROR_INVALID_PARAMETER;
+	}
+
+	importDirectoryRva = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+	importDirectoryOffset = OffsetFromRva(pPeFile, importDirectoryRva);
+	pPeFile->lpImportDescriptors = (PIMAGE_IMPORT_DESCRIPTOR)importDirectoryOffset;
+	pPeFile->importDescriptorsSize = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size;
+
+	//printf("!!!DEBUG!!! rva = %x size = %x\n", importDirectoryRva, pPeFile->importDescriptorsSize); // ok
 
 	return ERROR_SUCCESS;
 }
@@ -144,6 +161,12 @@ PeFileInit(
 	}
 
 	errorCode = LoadExportDirectory(pPeFile);
+	if (errorCode != ERROR_SUCCESS)
+	{
+		return errorCode;
+	}
+
+	errorCode = LoadImportDirectory(pPeFile);
 	if (errorCode != ERROR_SUCCESS)
 	{
 		return errorCode;
@@ -563,10 +586,73 @@ PrintExportInfos(
 	return ERROR_SUCCESS;
 }
 
+static BOOL
+ImportDescriptorIsNull(
+	_In_	PIMAGE_IMPORT_DESCRIPTOR	pImportDescriptor
+)
+{
+	if (NULL == pImportDescriptor)
+	{
+		fprintf(stderr, "[ERR]. ImportDescriptorIsNull: invalid parameter.\n");
+		return FALSE;
+	}
+
+	if (pImportDescriptor->OriginalFirstThunk == 0 &&
+		pImportDescriptor->TimeDateStamp == 0 &&
+		pImportDescriptor->ForwarderChain == 0 &&
+		pImportDescriptor->Name == 0 &&
+		pImportDescriptor->FirstThunk == 0)
+	{
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
 DWORD
 PrintImportInfos(
 	_In_	PPE_FILE	pPeFile
 )
 {
-	return 0;
+	PIMAGE_IMPORT_DESCRIPTOR	lpImportDescriptor;
+	PIMAGE_THUNK_DATA			lpThunk;
+	PIMAGE_IMPORT_BY_NAME		pImageImportByName;
+
+	if (NULL == pPeFile)
+	{
+		fprintf(stderr, "[ERR]. PrintImportInfos: invalid parameter.\n");
+		return ERROR_INVALID_PARAMETER;
+	}
+	
+	lpImportDescriptor = NULL;
+	lpThunk = NULL;
+	pImageImportByName = NULL;
+
+	for (lpImportDescriptor = pPeFile->lpImportDescriptors; !ImportDescriptorIsNull(lpImportDescriptor); lpImportDescriptor++)
+	{
+		printf("imported DLL module: %s\n", OffsetFromRva(pPeFile, lpImportDescriptor->Name));
+
+		if (lpImportDescriptor->OriginalFirstThunk != 0)
+		{
+			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->OriginalFirstThunk);
+		}
+		else
+		{
+			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->FirstThunk);
+		}
+
+		for (; lpThunk->u1.AddressOfData; lpThunk++)
+		{
+			if (lpThunk->u1.AddressOfData & IMAGE_ORDINAL_FLAG32)
+			{
+				printf("\t(function exported by ordinal) ordinal number: %d\n", (lpThunk->u1.Ordinal & (IMAGE_ORDINAL_FLAG32 - 1)));
+			}
+			else
+			{
+				printf("\t%s\n", ((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name);
+			}
+		}
+	}
+
+	return ERROR_SUCCESS;
 }
