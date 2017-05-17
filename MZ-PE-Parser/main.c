@@ -76,6 +76,18 @@ main(
 	PrintOptionalHeaderInfos(&peFile);
 	printf("\n");
 
+	printf("---- Section Headers infos ----\n");
+	PrintSectionHeadersInfos(&peFile);
+	printf("\n");
+
+	printf("---- Exported functions ----\n");
+	PrintExportInfos(&peFile);
+	printf("\n");
+
+	printf("---- Imported functions ----\n");
+	PrintImportInfos(&peFile);
+	printf("\n");
+
 CleanUp:
 	if (bInitialized)
 	{

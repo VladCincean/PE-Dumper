@@ -15,6 +15,8 @@ typedef struct _PE_FILE
 	PIMAGE_DOS_HEADER		pDosHeader;
 	PIMAGE_NT_HEADERS		pNtHeaders;
 	PIMAGE_SECTION_HEADER	pSectionHeaders;
+	PIMAGE_EXPORT_DIRECTORY	pExportDirectory;
+	DWORD					exportDirectorySize;
 } PE_FILE, *PPE_FILE;
 
 /* ===================== init =====================*/
@@ -50,6 +52,21 @@ PrintFileHeaderInfos(
 
 DWORD
 PrintOptionalHeaderInfos(
+	_In_	PPE_FILE	pPeFile
+);
+
+DWORD
+PrintSectionHeadersInfos(
+	_In_	PPE_FILE	pPeFile
+);
+
+DWORD
+PrintExportInfos(
+	_In_	PPE_FILE	pPeFile
+);
+
+DWORD
+PrintImportInfos(
 	_In_	PPE_FILE	pPeFile
 );
 

@@ -74,6 +74,35 @@ LoadSectionHeaders(
 	return ERROR_SUCCESS;
 }
 
+static DWORD
+LoadExportDirectory(
+	_Inout_	PPE_FILE	pPeFile
+)
+{
+	DWORD	exportDirectoryRva;
+	PBYTE	exportDirectoryOffset;
+
+	if (NULL == pPeFile)
+	{
+		fprintf(stderr, "[ERR]. LoadExportDirectory: invalid parameter.\n");
+		return ERROR_INVALID_PARAMETER;
+	}
+	
+	// export section RVA
+	exportDirectoryRva = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+
+	// find file offset for export section RVA
+	exportDirectoryOffset = OffsetFromRva(pPeFile, exportDirectoryRva);
+
+	// init pExportDirectory
+	pPeFile->pExportDirectory = (PIMAGE_EXPORT_DIRECTORY)exportDirectoryOffset;
+
+	// init exportDirectorySize
+	pPeFile->exportDirectorySize = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].Size;
+
+	return ERROR_SUCCESS;
+}
+
 DWORD
 PeFileInit(
 	_Out_		PPE_FILE	pPeFile,
@@ -109,6 +138,12 @@ PeFileInit(
 	}
 
 	errorCode = LoadSectionHeaders(pPeFile);
+	if (errorCode != ERROR_SUCCESS)
+	{
+		return errorCode;
+	}
+
+	errorCode = LoadExportDirectory(pPeFile);
 	if (errorCode != ERROR_SUCCESS)
 	{
 		return errorCode;
@@ -426,4 +461,112 @@ PrintOptionalHeaderInfos(
 	printf("NumberOfRvaAndSizes: %d\n", numberOfRvaAndSizes);
 
 	return ERROR_SUCCESS;
+}
+
+DWORD
+PrintSectionHeadersInfos(
+	_In_	PPE_FILE	pPeFile
+)
+{
+	DWORD	nrSections;
+	DWORD	iSection;
+	CHAR	temp[IMAGE_SIZEOF_SHORT_NAME + 1];
+
+	if (NULL == pPeFile)
+	{
+		fprintf(stderr, "[ERR]. PrintSectionHeadersInfos: invalid parameter.\n");
+		return ERROR_INVALID_PARAMETER;
+	}
+
+	nrSections = pPeFile->pNtHeaders->FileHeader.NumberOfSections;
+	memset(temp, 0, IMAGE_SIZEOF_SHORT_NAME + 1);
+
+	for (iSection = 0; iSection < nrSections; iSection++)
+	{
+		memset(temp, 0, IMAGE_SIZEOF_SHORT_NAME + 1);
+		memcpy(temp, pPeFile->pSectionHeaders[iSection].Name, IMAGE_SIZEOF_SHORT_NAME);
+		printf("Section nr. %d:\n", iSection);
+		printf("\t- name:\t%s\n", temp);
+		printf(
+			"\t- addresss:\n\t\tRVA:\t0x%08x\n\t\tFA:\t0x%08x\n",
+			pPeFile->pSectionHeaders[iSection].VirtualAddress,
+			FaFromRva(pPeFile, pPeFile->pSectionHeaders[iSection].VirtualAddress)
+		);
+		printf("\t- size: %d bytes\n", pPeFile->pSectionHeaders[iSection].SizeOfRawData);
+	}
+
+	return ERROR_SUCCESS;
+}
+
+DWORD
+PrintExportInfos(
+	_In_	PPE_FILE	pPeFile
+)
+{
+	DWORD	nrOfNames;
+	DWORD	nrOfFunctions;
+	DWORD	i;
+	PDWORD	functionNames;
+	PWORD	functionOrdinals;
+	PDWORD	functionAddresses;
+	PBYTE	fName;
+	WORD	fOrdinal;
+	DWORD	fRva;
+
+	if (NULL == pPeFile)
+	{
+		fprintf(stderr, "[ERR]. PrintExportInfos: invalid parameter.\n");
+		return ERROR_INVALID_PARAMETER;
+	}
+
+	if (pPeFile->exportDirectorySize == 0)
+	{
+		printf("The PE file has no export directory (size = 0).\n");
+		return ERROR_SUCCESS;
+	}
+	if (pPeFile->pExportDirectory == 0)
+	{
+		printf("The PE file has no export directory.\n");
+		return ERROR_SUCCESS;
+	}
+
+	nrOfNames = pPeFile->pExportDirectory->NumberOfNames;
+	nrOfFunctions = pPeFile->pExportDirectory->NumberOfFunctions;
+	i = 0;
+	functionNames = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNames);
+	functionOrdinals = (PWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNameOrdinals);
+	functionAddresses = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfFunctions);
+	fName = NULL;
+	fOrdinal = 0;
+	fRva = 0;
+
+	printf("name of the DLL: %s\n", OffsetFromRva(pPeFile, pPeFile->pExportDirectory->Name));
+	printf("nr of names: %d\n", nrOfNames);
+	printf("nr of functions: %d\n", nrOfFunctions);
+	printf("\n");
+
+	printf("%11s %-50s %-10s %-10s\n", "Ordinal", "Function name", "RVA", "FA");
+	for (i = 0; i < nrOfNames; i++)
+	{
+		fOrdinal = functionOrdinals[i];
+		fName = OffsetFromRva(pPeFile, functionNames[i]);
+		fRva = functionAddresses[fOrdinal];
+
+		//printf("\t- ordinal:\t%d\n", fOrdinal);
+		//printf("\t- name:\t%s\n", fName);
+		//printf("\t- addr:\n");
+		//printf("\t\tRVA:\t0x%08x\n\t\tFA:\t0x%08x\n", fRva, FaFromRva(pPeFile, fRva));
+
+		printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, fName, fRva, FaFromRva(pPeFile, fRva));
+	}
+
+	return ERROR_SUCCESS;
+}
+
+DWORD
+PrintImportInfos(
+	_In_	PPE_FILE	pPeFile
+)
+{
+	return 0;
 }
