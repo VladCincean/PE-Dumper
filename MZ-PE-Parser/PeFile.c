@@ -526,12 +526,13 @@ PrintExportInfos(
 	_In_	PPE_FILE	pPeFile
 )
 {
+	LPSTR	dllName;
 	DWORD	nrOfNames;
 	DWORD	nrOfFunctions;
-	DWORD	i;
 	PDWORD	functionNames;
 	PWORD	functionOrdinals;
 	PDWORD	functionAddresses;
+	DWORD	i;
 	PBYTE	fName;
 	WORD	fOrdinal;
 	DWORD	fRva;
@@ -547,40 +548,68 @@ PrintExportInfos(
 		printf("The PE file has no export directory (size = 0).\n");
 		return ERROR_SUCCESS;
 	}
-	if (pPeFile->pExportDirectory == 0)
+	if (pPeFile->pExportDirectory == NULL)
 	{
-		printf("The PE file has no export directory.\n");
-		return ERROR_SUCCESS;
+		printf("Null export directory file offset due to invalid or null RVA (size = %d)\n", pPeFile->exportDirectorySize);
+		return ERROR_NULL_FILE_OFFSET;
 	}
 
-	nrOfNames = pPeFile->pExportDirectory->NumberOfNames;
-	nrOfFunctions = pPeFile->pExportDirectory->NumberOfFunctions;
+	__try
+	{
+		dllName = (LPSTR)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->Name);
+		nrOfNames = pPeFile->pExportDirectory->NumberOfNames;
+		nrOfFunctions = pPeFile->pExportDirectory->NumberOfFunctions;
+		functionNames = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNames);
+		functionOrdinals = (PWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNameOrdinals);
+		functionAddresses = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfFunctions);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		printf("Cannot parse export directory due to exception while accessing the fields.\n");
+		return ERROR_INVALID_STRUCT_ACCESS;
+	}
 	i = 0;
-	functionNames = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNames);
-	functionOrdinals = (PWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNameOrdinals);
-	functionAddresses = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfFunctions);
 	fName = NULL;
 	fOrdinal = 0;
 	fRva = 0;
 
-	printf("name of the DLL: %s\n", OffsetFromRva(pPeFile, pPeFile->pExportDirectory->Name));
+	if (dllName)
+	{
+		printf("name of the DLL: %s\n", dllName);
+	}
+	else
+	{
+		printf("name of the DLL: [unknown] due to bad RVA.\n");
+	}
 	printf("nr of names: %d\n", nrOfNames);
 	printf("nr of functions: %d\n", nrOfFunctions);
 	printf("\n");
 
+	printf("4\n");
+
 	printf("%11s %-50s %-10s %-10s\n", "Ordinal", "Function name", "RVA", "FA");
 	for (i = 0; i < nrOfNames; i++)
 	{
-		fOrdinal = functionOrdinals[i];
-		fName = OffsetFromRva(pPeFile, functionNames[i]);
-		fRva = functionAddresses[fOrdinal];
+		__try
+		{
+			fOrdinal = functionOrdinals[i];
+			fName = OffsetFromRva(pPeFile, functionNames[i]);
+			fRva = functionAddresses[fOrdinal];
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			printf("Cannot access function with index %i\n", i);
+			// continue execution - maybe the other ones will work
+		}
 
-		//printf("\t- ordinal:\t%d\n", fOrdinal);
-		//printf("\t- name:\t%s\n", fName);
-		//printf("\t- addr:\n");
-		//printf("\t\tRVA:\t0x%08x\n\t\tFA:\t0x%08x\n", fRva, FaFromRva(pPeFile, fRva));
-
-		printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, fName, fRva, FaFromRva(pPeFile, fRva));
+		if (fName)
+		{
+			printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, fName, fRva, FaFromRva(pPeFile, fRva));
+		}
+		else
+		{
+			printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, "[unknown_function_name]", fRva, FaFromRva(pPeFile, fRva));
+		}
 	}
 
 	return ERROR_SUCCESS;
@@ -597,12 +626,20 @@ ImportDescriptorIsNull(
 		return FALSE;
 	}
 
-	if (pImportDescriptor->OriginalFirstThunk == 0 &&
-		pImportDescriptor->TimeDateStamp == 0 &&
-		pImportDescriptor->ForwarderChain == 0 &&
-		pImportDescriptor->Name == 0 &&
-		pImportDescriptor->FirstThunk == 0)
+	__try
 	{
+		if (pImportDescriptor->OriginalFirstThunk == 0 &&
+			pImportDescriptor->TimeDateStamp == 0 &&
+			pImportDescriptor->ForwarderChain == 0 &&
+			pImportDescriptor->Name == 0 &&
+			pImportDescriptor->FirstThunk == 0)
+		{
+			return TRUE;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		fprintf(stderr, "[ERR]: ImportDescriptorIsNull: invalid import descriptor - exception during memory access.\n");
 		return TRUE;
 	}
 
@@ -617,28 +654,62 @@ PrintImportInfos(
 	PIMAGE_IMPORT_DESCRIPTOR	lpImportDescriptor;
 	PIMAGE_THUNK_DATA			lpThunk;
 	PIMAGE_IMPORT_BY_NAME		pImageImportByName;
+	LPSTR						dllName;
+	LPSTR						functionName;
 
 	if (NULL == pPeFile)
 	{
 		fprintf(stderr, "[ERR]. PrintImportInfos: invalid parameter.\n");
 		return ERROR_INVALID_PARAMETER;
 	}
+
+	if (pPeFile->importDescriptorsSize == 0)
+	{
+		printf("The PE file has no import directory (size = 0).\n");
+		return ERROR_SUCCESS;
+	}
+	if (pPeFile->lpImportDescriptors == NULL)
+	{
+		printf("Null import directory file offset due to invalid or null RVA (size = %d)\n", pPeFile->importDescriptorsSize);
+		return ERROR_NULL_FILE_OFFSET;
+	}
 	
 	lpImportDescriptor = NULL;
 	lpThunk = NULL;
 	pImageImportByName = NULL;
+	dllName = NULL;
+	functionName = NULL;
 
 	for (lpImportDescriptor = pPeFile->lpImportDescriptors; !ImportDescriptorIsNull(lpImportDescriptor); lpImportDescriptor++)
 	{
-		printf("imported DLL module: %s\n", OffsetFromRva(pPeFile, lpImportDescriptor->Name));
+		dllName = (LPSTR)OffsetFromRva(pPeFile, lpImportDescriptor->Name);
+		if (dllName)
+		{
+			printf("imported DLL module: %s\n", OffsetFromRva(pPeFile, lpImportDescriptor->Name));
+		}
+		else
+		{
+			printf("imported DLL module: [unknown name] due to bad RVA\n");
+		}
 
 		if (lpImportDescriptor->OriginalFirstThunk != 0)
 		{
 			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->OriginalFirstThunk);
 		}
-		else
+		else if (lpImportDescriptor->FirstThunk != 0)
 		{
 			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->FirstThunk);
+		}
+		else
+		{
+			printf("\tBoth OriginalFirstThunk and FirstThunk RVAs are null.\n");
+			continue;
+		}
+
+		if (!lpThunk)
+		{
+			printf("\t(Original)FirstThunk - bad RVA.\n");
+			continue;
 		}
 
 		for (; lpThunk->u1.AddressOfData; lpThunk++)
@@ -649,7 +720,15 @@ PrintImportInfos(
 			}
 			else
 			{
-				printf("\t%s\n", ((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name);
+				functionName = (LPSTR)((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name;
+				if (functionName)
+				{
+					printf("\t%s\n", ((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name);
+				}
+				else
+				{
+					printf("\t[unknown function name] due to bad RVA\n");
+				}
 			}
 		}
 	}
