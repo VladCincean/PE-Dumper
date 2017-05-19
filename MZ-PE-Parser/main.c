@@ -21,6 +21,7 @@ main(
 )
 {
 	DWORD		error;
+	BOOL		is32Bit;
 	FILE_MAP	fileMap;
 	BOOL		bInitialized;
 	PE_FILE		peFile;
@@ -32,6 +33,7 @@ main(
 	}
 
 	error = ERROR_SUCCESS;
+	is32Bit = FALSE;
 	bInitialized = FALSE;
 
 	error = FileMapPreinit(&fileMap);
@@ -62,33 +64,59 @@ main(
 		goto CleanUp;
 	}
 
-	//printf("Image Base:\t0x%08x\n", peFile.pNtHeaders->OptionalHeader.ImageBase);
-	//printf("Entry Point:\t0x%08x 0x%08x\n",
-	//	peFile.pNtHeaders->OptionalHeader.AddressOfEntryPoint,
-	//	FaFromRva(&peFile, peFile.pNtHeaders->OptionalHeader.AddressOfEntryPoint)
-	//);
-
 	printf("---- File Header infos ----\n");
-	PrintFileHeaderInfos(&peFile);
+	error = PrintFileHeaderInfos(&peFile);
 	printf("\n");
+	if (error != ERROR_IS_32BIT_MACHINE && error != ERROR_IS_64BIT_MACHINE)
+	{
+		goto CleanUp;
+	}
+	if (error == ERROR_IS_32BIT_MACHINE)
+	{
+		is32Bit = TRUE;
+	}
+	else
+	{
+		goto CleanUp;
+	}
 
 	printf("---- Optional Header infos ----\n");
-	PrintOptionalHeaderInfos(&peFile);
+	error = PrintOptionalHeaderInfos(&peFile);
 	printf("\n");
+	if (error != ERROR_SUCCESS)
+	{
+		goto CleanUp;
+	}
 
 	printf("---- Section Headers infos ----\n");
-	PrintSectionHeadersInfos(&peFile);
+	error = PrintSectionHeadersInfos(&peFile);
 	printf("\n");
+	if (error != ERROR_SUCCESS)
+	{
+		goto CleanUp;
+	}
 
 	printf("---- Exported functions ----\n");
-	PrintExportInfos(&peFile);
+	error = PrintExportInfos(&peFile);
 	printf("\n");
+	if (error != ERROR_SUCCESS)
+	{
+		goto CleanUp;
+	}
 
 	printf("---- Imported functions ----\n");
-	PrintImportInfos(&peFile);
+	error = PrintImportInfos(&peFile);
 	printf("\n");
+	if (error != ERROR_SUCCESS)
+	{
+		goto CleanUp;
+	}
 
 CleanUp:
+	if (!is32Bit)
+	{
+		printf("PE Parser v1.0: I currently cannot show more info for 'non-x86 32-bit PE files'.\n");
+	}
 	if (bInitialized)
 	{
 		FileMapDestroy(&fileMap);

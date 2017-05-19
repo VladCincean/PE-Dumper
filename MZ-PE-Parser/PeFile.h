@@ -7,6 +7,9 @@
 #define ERROR_INVALID_PE_MAGIC	0x4002
 #define ERROR_INVALID_LFANEW	0x4003
 
+#define ERROR_IS_32BIT_MACHINE	0x4004
+#define ERROR_IS_64BIT_MACHINE	0x4005
+
 typedef struct _PE_FILE
 {
 	PBYTE						pData;

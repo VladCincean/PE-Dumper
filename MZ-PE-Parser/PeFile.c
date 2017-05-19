@@ -395,7 +395,7 @@ PrintFileHeaderInfos(
 		printf("- Big endian.\n");
 	}
 
-	return ERROR_SUCCESS;
+	return (characteristics & IMAGE_FILE_32BIT_MACHINE) ? ERROR_IS_32BIT_MACHINE : ERROR_IS_64BIT_MACHINE;
 }
 
 DWORD
