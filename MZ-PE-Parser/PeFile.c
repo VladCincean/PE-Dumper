@@ -598,10 +598,10 @@ PrintExportInfos(
 		}
 
 		nrOfNames = pPeFile->pExportDirectory->NumberOfNames;
-		printf("nr of names: %lu\n", nrOfNames);
+		printf("nr of functions exported by name: %lu\n", nrOfNames);
 
 		nrOfFunctions = pPeFile->pExportDirectory->NumberOfFunctions;
-		printf("nr of functions: %lu\n", nrOfFunctions);
+		printf("total number of functions: %lu\n", nrOfFunctions);
 
 		functionNames = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNames);
 		functionOrdinals = (PWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNameOrdinals);
