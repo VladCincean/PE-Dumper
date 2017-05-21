@@ -21,7 +21,7 @@ main(
 )
 {
 	DWORD		error;
-	BOOL		is32Bit;
+	BOOL		is64Bit;
 	FILE_MAP	fileMap;
 	BOOL		bInitialized;
 	PE_FILE		peFile;
@@ -33,7 +33,7 @@ main(
 	}
 
 	error = ERROR_SUCCESS;
-	is32Bit = FALSE;
+	is64Bit = FALSE;
 	bInitialized = FALSE;
 
 	error = FileMapPreinit(&fileMap);
@@ -55,8 +55,7 @@ main(
 	error = PeFileInit(
 		&peFile,
 		fileMap.pData,
-		fileMap.bcFileSizeLow,
-		fileMap.bcFileSizeHigh
+		fileMap.bcFileSizeLow
 	);
 	if (error != 0)
 	{
@@ -64,59 +63,70 @@ main(
 		goto CleanUp;
 	}
 
-	printf("---- File Header infos ----\n");
-	error = PrintFileHeaderInfos(&peFile);
-	printf("\n");
-	if (error != ERROR_IS_32BIT_MACHINE && error != ERROR_IS_64BIT_MACHINE)
-	{
-		goto CleanUp;
-	}
-	if (error == ERROR_IS_32BIT_MACHINE)
-	{
-		is32Bit = TRUE;
-	}
-	else
-	{
-		goto CleanUp;
-	}
+	is64Bit = peFile.optionalHeaderMagic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
 
-	printf("---- Optional Header infos ----\n");
-	error = PrintOptionalHeaderInfos(&peFile);
-	printf("\n");
-	if (error != ERROR_SUCCESS)
+	__try
 	{
-		goto CleanUp;
+		printf("---- File Header infos ----\n");
+		PrintFileHeaderInfos(&peFile);
 	}
-
-	printf("---- Section Headers infos ----\n");
-	error = PrintSectionHeadersInfos(&peFile);
-	printf("\n");
-	if (error != ERROR_SUCCESS)
+	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
-		goto CleanUp;
+		printf("\nmain: Exception while printing file header infos.\n");
 	}
-
-	printf("---- Exported functions ----\n");
-	error = PrintExportInfos(&peFile);
 	printf("\n");
-	if (error != ERROR_SUCCESS)
-	{
-		goto CleanUp;
-	}
 
-	printf("---- Imported functions ----\n");
-	error = PrintImportInfos(&peFile);
-	printf("\n");
-	if (error != ERROR_SUCCESS)
-	{
-		goto CleanUp;
-	}
-
-CleanUp:
-	if (!is32Bit)
+	if (is64Bit)
 	{
 		printf("PE Parser v1.0: I currently cannot show more info for 'non-x86 32-bit PE files'.\n");
+		goto CleanUp;
 	}
+
+	__try
+	{
+		printf("---- Optional Header infos ----\n");
+		PrintOptionalHeaderInfos(&peFile);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		printf("\nmain: Exception while printing optional header infos.\n");
+	}
+	printf("\n");
+
+	__try
+	{
+		printf("---- Section Headers infos ----\n");
+		PrintSectionHeadersInfos(&peFile);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		printf("\nmain: Exception while printing section headers infos.\n");
+	}
+	printf("\n");
+
+	__try
+	{
+		printf("---- Exported functions ----\n");
+		PrintExportInfos(&peFile);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		printf("\nmain: Exception while printing exported functions.\n");
+	}
+	printf("\n");
+
+	__try
+	{
+		printf("---- Imported functions ----\n");
+		PrintImportInfos(&peFile);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		printf("\nmain: Exception while printing imported functions.\n");
+	}
+	printf("\n");
+
+CleanUp:
 	if (bInitialized)
 	{
 		FileMapDestroy(&fileMap);

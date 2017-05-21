@@ -39,7 +39,7 @@ LoadNtHeader(
 	}
 
 	ntOffset = (DWORD)pPeFile->pDosHeader->e_lfanew;
-	if (ntOffset > pPeFile->bcFileSizeLow || ntOffset < 0)
+	if (ntOffset > pPeFile->bcFileSize || pPeFile->pDosHeader->e_lfanew < 0)
 	{
 		fprintf(stderr, "[ERR]. LoadNtHeader: invalid FA inside e_lfanew.\n");
 		return ERROR_INVALID_LFANEW;
@@ -115,8 +115,6 @@ LoadImportDirectory(
 	pPeFile->lpImportDescriptors = (PIMAGE_IMPORT_DESCRIPTOR)importDirectoryOffset;
 	pPeFile->importDescriptorsSize = pPeFile->pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size;
 
-	//printf("!!!DEBUG!!! rva = %x size = %x\n", importDirectoryRva, pPeFile->importDescriptorsSize); // ok
-
 	return ERROR_SUCCESS;
 }
 
@@ -124,8 +122,7 @@ DWORD
 PeFileInit(
 	_Out_		PPE_FILE	pPeFile,
 	_In_		PBYTE		pData,
-	_In_		DWORD		bcFileSizeLow,
-	_In_opt_	DWORD		bcFileSizeHigh
+	_In_		DWORD		bcFileSize
 )
 {
 	DWORD	errorCode;
@@ -139,8 +136,7 @@ PeFileInit(
 	errorCode = ERROR_SUCCESS;
 
 	pPeFile->pData = pData;
-	pPeFile->bcFileSizeLow = bcFileSizeLow;
-	pPeFile->bcFileSizeHigh = bcFileSizeHigh;
+	pPeFile->bcFileSize = bcFileSize;
 
 	errorCode = LoadDosHeader(pPeFile);
 	if (errorCode != ERROR_SUCCESS)
@@ -153,6 +149,8 @@ PeFileInit(
 	{
 		return errorCode;
 	}
+
+	pPeFile->optionalHeaderMagic = pPeFile->pNtHeaders->OptionalHeader.Magic;
 
 	errorCode = LoadSectionHeaders(pPeFile);
 	if (errorCode != ERROR_SUCCESS)
@@ -185,12 +183,13 @@ FaFromRva(
 {
 	DWORD	i;
 	DWORD	offset;
+	DWORD	size;
 
 	for (i = 0; i < pPeFile->pNtHeaders->FileHeader.NumberOfSections; i++)
 	{
-		if (rvaAddress >= pPeFile->pSectionHeaders[i].VirtualAddress &&
-			rvaAddress < pPeFile->pSectionHeaders[i].VirtualAddress + pPeFile->pSectionHeaders[i].Misc.VirtualSize
-			)
+		size = 0;
+		size = pPeFile->pSectionHeaders[i].Misc.VirtualSize;
+		if ((rvaAddress >= pPeFile->pSectionHeaders[i].VirtualAddress) && (rvaAddress < pPeFile->pSectionHeaders[i].VirtualAddress + size))
 		{
 			offset = rvaAddress - pPeFile->pSectionHeaders[i].VirtualAddress;
 			return pPeFile->pSectionHeaders[i].PointerToRawData + offset;
@@ -237,12 +236,12 @@ PrintFileHeaderInfos(
 	characteristics = pPeFile->pNtHeaders->FileHeader.Characteristics;
 
 	// Machine
-	printf("Machine id: %d\n", machine);
+	printf("Machine id: %u\n", machine);
 	printf("Machine: ");
 	switch (machine)
 	{
 	case IMAGE_FILE_MACHINE_UNKNOWN:
-		printf("any");
+		printf("[any]");
 		break;
 	case IMAGE_FILE_MACHINE_AM33:
 		printf("Matsushita AM33");
@@ -316,86 +315,82 @@ PrintFileHeaderInfos(
 	printf("\n");
 
 	// Number of sections
-	printf("Number of sections: %d\n", nrOfSections);
+	printf("Number of sections: %u", nrOfSections);
+	if (nrOfSections >= MAX_INCONSISTENCY_COUNT_SECTIONS)
+	{
+		printf(" (may be inconsistent)");
+	}
+	printf("\n");
 
 	// Characteristics
 	printf("Characteristics: 0x04%x:\n", characteristics);
 	if (characteristics & IMAGE_FILE_RELOCS_STRIPPED)
 	{
-		printf("- There is no base relocation information in the file. It must be loaded at its preferred base address. ");
-		printf("If the base address is not available, the loader reports an error. ");
-		printf("The default behavior of the linker is to strip base relocations from executable (EXE) files.\n");
+		printf("\t- IMAGE_FILE_RELOCS_STRIPPED: There is no base relocation information in the file. It must be loaded at its preferred base address.\n");
+		printf("\tIf the base address is not available, the loader reports an error.\n");
+		printf("\tThe default behavior of the linker is to strip base relocations from executable (EXE) files.\n");
 	}
 	if (characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)
 	{
-		printf("- The file is executable (i.e. it is not an object file or library).\n");
-	}
-	else
-	{
-		printf("- [If it is an image] a linked error occured.\n");
+		printf("\t- IMAGE_FILE_EXECUTABLE_IMAGE: The file is executable (there are no unresolved external references).\n");
 	}
 	if (characteristics & IMAGE_FILE_LINE_NUMS_STRIPPED)
 	{
-		printf("Warning: deprecated flag is set: IMAGE_FILE_LINE_NUMS_STRIPPED\n");
-		printf("- COFF line numbers have been removed\n");
+		printf("\t- IMAGE_FILE_LINE_NUMS_STRIPPED [deprecated]: COFF line numbers were stripped from the file.\n");
 	}
 	if (characteristics & IMAGE_FILE_LOCAL_SYMS_STRIPPED)
 	{
-		printf("Warning: deprecated flag is set: IMAGE_FILE_LOCAL_SYMS_STRIPPED\n");
-		printf("- COFF symbol table entries for local symbols have been removed (there is no information about local symbols in the file)\n");
+		printf("\t- IMAGE_FILE_LOCAL_SYMS_STRIPPED [deprecated]: COFF symbol table entries were stripped from file.\n");
 	}
 	if (characteristics & IMAGE_FILE_AGGRESIVE_WS_TRIM)
 	{
-		printf("Warning: IMAGE_FILE_AGGRESIVE_WS_TRIM flag is deprecated for Windows 2000 and later and must be zero, but it is set.\n");
-		printf("- Aggressively trim working set. i.e. the operating system is supposed to trim the working set of the running proces\n");
-		printf("(the amount of RAM the process uses) aggressivly by paging it out\n");
+		printf("\t- IMAGE_FILE_AGGRESIVE_WS_TRIM [deprecated]: Aggressively trim working set. i.e. the operating system is supposed to trim the working\n");
+		printf("\tset of the running proces (the amount of RAM the process uses) aggressivly by paging it out\n");
 	}
 	if (characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
 	{
-		printf("- Application can handle > 2 GB addresses.\n");
+		printf("\t- IMAGE_FILE_LARGE_ADDRESS_AWARE: The application can handle addresses larger than 2 GB.\n");
 	}
 	if (characteristics & IMAGE_FILE_BYTES_REVERSED_LO)
 	{
-		printf("Warning: deprecated flag IMAGE_FILE_BYTES_REVERSED_LO set.\n");
-		printf("- Little endian.\n");
+		printf("\t- IMAGE_FILE_BYTES_REVERSED_LO [deprecated]: Little endian.\n");
 	}
 	if (characteristics & IMAGE_FILE_32BIT_MACHINE)
 	{
-		printf("- Machine is based on a 32-bit-word architecture.\n");
+		printf("\t- IMAGE_FILE_32BIT_MACHINE: Machine is based on a 32-bit-word architecture.\n");
 	}
 	if (characteristics & IMAGE_FILE_DEBUG_STRIPPED)
 	{
-		printf("- Debugging information is removed from the image file.\n");
+		printf("\t- IMAGE_FILE_DEBUG_STRIPPED: Debugging information is removed from the image file.\n");
 	}
 	if (characteristics & IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP)
 	{
-		printf("- The application may not run from a removable medium such as a floppy or a CD - ROM.\n");
-		printf("The operating system is advised to copy the file to the swapfile and execute it from there.\n");
+		printf("\t- IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP: The application may not run from a removable medium such as a floppy or a CD - ROM.\n");
+		printf("\tThe operating system is advised to copy the file to the swapfile and execute it from there.\n");
 	}
 	if (characteristics & IMAGE_FILE_NET_RUN_FROM_SWAP)
 	{
-		printf("- The application may not run from the network.\n");
-		printf("The operating system is advised to copy the file to the swapfile and execute it from there.\n");
+		printf("\t- IMAGE_FILE_NET_RUN_FROM_SWAP: The application may not run from the network.\n");
+		printf("\tThe operating system is advised to copy the file to the swapfile and execute it from there.\n");
 	}
 	if (characteristics & IMAGE_FILE_SYSTEM)
 	{
-		printf("- The image file is a system file (e.g. driver, etc.), not a user program.\n");
+		printf("\t- IMAGE_FILE_SYSTEM: The image file is a system file (e.g. driver, etc.), not a user program.\n");
 	}
 	if (characteristics & IMAGE_FILE_DLL)
 	{
-		printf("- The image file is a dynamic-link library (DLL).\n");
+		printf("\t- IMAGE_FILE_DLL: The image file is a dynamic-link library (DLL).\n");
 	}
 	if (characteristics & IMAGE_FILE_UP_SYSTEM_ONLY)
 	{
-		printf("- The file should be run only on a uniprocessor machine.\n");
+		printf("\t- IMAGE_FILE_UP_SYSTEM_ONLY: The file should be run only on a uniprocessor machine.\n");
 	}
 	if (characteristics & IMAGE_FILE_BYTES_REVERSED_HI)
 	{
-		printf("Warning: deprecated flag IMAGE_FILE_BYTES_REVERSED_HI set.\n");
-		printf("- Big endian.\n");
+		printf("\t- IMAGE_FILE_BYTES_REVERSED_HI [deprecated]: Big endian.\n");
 	}
 
-	return (characteristics & IMAGE_FILE_32BIT_MACHINE) ? ERROR_IS_32BIT_MACHINE : ERROR_IS_64BIT_MACHINE;
+	return ERROR_SUCCESS;
 }
 
 DWORD
@@ -428,14 +423,13 @@ PrintOptionalHeaderInfos(
 	printf("\tRVA:\t0x%08x\n\tFA:\t0x%08x\n", addressOfEntryPoint, FaFromRva(pPeFile, addressOfEntryPoint));
 
 	// ImageBase
-	printf("ImageBase:\n");
-	printf("\tRVA:\t0x%08x\n\tFA:\t0x%08x\n", imageBase, FaFromRva(pPeFile, imageBase));
+	printf("ImageBase: 0x%08x\n", imageBase);
 
 	// SectionAlignment
-	printf("SectionAlignment: %d bytes\n", sectionAlignment);
+	printf("SectionAlignment: %lu bytes\n", sectionAlignment);
 
 	// FileAlignment
-	printf("FileAlignment: %d bytes\n", fileAlignment);
+	printf("FileAlignment: %lu bytes\n", fileAlignment);
 
 	// Subsystem
 	printf("Subsystem: 0x04%x: ", subsystem);
@@ -448,31 +442,37 @@ PrintOptionalHeaderInfos(
 		printf("device drivers and native Windows processes");
 		break;
 	case IMAGE_SUBSYSTEM_WINDOWS_GUI:
-		printf("the Windows GUI subsystem");
+		printf("Windows GUI");
 		break;
 	case IMAGE_SUBSYSTEM_WINDOWS_CUI:
-		printf("the Windows character subsystem");
+		printf("Windows CUI");
+		break;
+	case IMAGE_SUBSYSTEM_OS2_CUI:
+		printf("OS/2 CUI");
 		break;
 	case IMAGE_SUBSYSTEM_POSIX_CUI:
-		printf("the Posix character subsystem");
+		printf("POSIX CUI");
 		break;
 	case IMAGE_SUBSYSTEM_WINDOWS_CE_GUI:
 		printf("Windows CE");
 		break;
 	case IMAGE_SUBSYSTEM_EFI_APPLICATION:
-		printf("an Extensible Firmware Interface (EFI) application");
+		printf("Extensible Firmware Interface (EFI)");
 		break;
 	case IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER:
-		printf("an EFI driver with boot services");
+		printf("EFI driver with boot services");
 		break;
 	case IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER:
-		printf("an EFI driver with run-time services");
+		printf("EFI driver with run-time services");
 		break;
 	case IMAGE_SUBSYSTEM_EFI_ROM:
-		printf("an EFI ROM image");
+		printf("EFI ROM image");
 		break;
 	case IMAGE_SUBSYSTEM_XBOX:
 		printf("XBOX");
+		break;
+	case IMAGE_SUBSYSTEM_WINDOWS_BOOT_APPLICATION:
+		printf("Windows Boot Application");
 		break;
 	default:
 		printf("[unknown]");
@@ -481,7 +481,7 @@ PrintOptionalHeaderInfos(
 	printf("\n");
 
 	// NumberOfRvaAndSizes
-	printf("NumberOfRvaAndSizes: %d\n", numberOfRvaAndSizes);
+	printf("NumberOfRvaAndSizes: %lu\n", numberOfRvaAndSizes);
 
 	return ERROR_SUCCESS;
 }
@@ -508,14 +508,26 @@ PrintSectionHeadersInfos(
 	{
 		memset(temp, 0, IMAGE_SIZEOF_SHORT_NAME + 1);
 		memcpy(temp, pPeFile->pSectionHeaders[iSection].Name, IMAGE_SIZEOF_SHORT_NAME);
-		printf("Section nr. %d:\n", iSection);
+		printf("Section nr. %lu:\n", iSection + 1);
 		printf("\t- name:\t%s\n", temp);
 		printf(
 			"\t- addresss:\n\t\tRVA:\t0x%08x\n\t\tFA:\t0x%08x\n",
 			pPeFile->pSectionHeaders[iSection].VirtualAddress,
 			FaFromRva(pPeFile, pPeFile->pSectionHeaders[iSection].VirtualAddress)
 		);
-		printf("\t- size: %d bytes\n", pPeFile->pSectionHeaders[iSection].SizeOfRawData);
+		printf("\t- virtual size:\t%lu bytes\n", pPeFile->pSectionHeaders[iSection].Misc.VirtualSize);
+		printf("\t- raw size:\t%lu bytes\n", pPeFile->pSectionHeaders[iSection].SizeOfRawData);
+
+		if (iSection >= MAX_INCONSISTENCY_COUNT_SECTIONS)
+		{
+			printf(
+				"NumberOfSections (%d) seems to indicate inconsistent section headers. Only %d out of %d sections were shown.\n",
+				nrSections,
+				iSection + 1,
+				nrSections
+			);
+			break;
+		}
 	}
 
 	return ERROR_SUCCESS;
@@ -526,6 +538,7 @@ PrintExportInfos(
 	_In_	PPE_FILE	pPeFile
 )
 {
+	DWORD	error;
 	LPSTR	dllName;
 	DWORD	nrOfNames;
 	DWORD	nrOfFunctions;
@@ -536,6 +549,8 @@ PrintExportInfos(
 	PBYTE	fName;
 	WORD	fOrdinal;
 	DWORD	fRva;
+	LPBYTE	lpFlagArray;
+	DWORD	nInconsistencyCount;
 
 	if (NULL == pPeFile)
 	{
@@ -550,15 +565,44 @@ PrintExportInfos(
 	}
 	if (pPeFile->pExportDirectory == NULL)
 	{
-		printf("Null export directory file offset due to invalid or null RVA (size = %d)\n", pPeFile->exportDirectorySize);
-		return ERROR_NULL_FILE_OFFSET;
+		printf("Null export directory file offset due to invalid or null RVA (size = %lu)\n", pPeFile->exportDirectorySize);
+		return ERROR_SUCCESS;
 	}
+
+	if (((PBYTE)pPeFile->pExportDirectory > pPeFile->pData + pPeFile->bcFileSize) || ((PBYTE)pPeFile->pExportDirectory < pPeFile->pData))
+	{
+		fprintf(stderr, "[ERR]. PrintExportInfos: pointer to export directory is invalid.\n");
+		return ERROR_INVALID_POINTER;
+	}
+
+	error = ERROR_SUCCESS;
+	dllName = NULL;
+	nrOfNames = 0;
+	nrOfFunctions = 0;
+	functionNames = NULL;
+	functionOrdinals = NULL;
+	functionAddresses = NULL;
+	lpFlagArray = NULL;
+	nInconsistencyCount = 0;
 
 	__try
 	{
 		dllName = (LPSTR)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->Name);
+		if (dllName)
+		{
+			printf("name of the DLL: %s\n", dllName);
+		}
+		else
+		{
+			printf("name of the DLL: [unknown] due to bad RVA.\n");
+		}
+
 		nrOfNames = pPeFile->pExportDirectory->NumberOfNames;
+		printf("nr of names: %lu\n", nrOfNames);
+
 		nrOfFunctions = pPeFile->pExportDirectory->NumberOfFunctions;
+		printf("nr of functions: %lu\n", nrOfFunctions);
+
 		functionNames = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNames);
 		functionOrdinals = (PWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfNameOrdinals);
 		functionAddresses = (PDWORD)OffsetFromRva(pPeFile, pPeFile->pExportDirectory->AddressOfFunctions);
@@ -566,50 +610,98 @@ PrintExportInfos(
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
 		printf("Cannot parse export directory due to exception while accessing the fields.\n");
-		return ERROR_INVALID_STRUCT_ACCESS;
+		error = ERROR_INVALID_STRUCT_ACCESS;
 	}
-	i = 0;
-	fName = NULL;
-	fOrdinal = 0;
-	fRva = 0;
-
-	if (dllName)
+	if (error != ERROR_SUCCESS)
 	{
-		printf("name of the DLL: %s\n", dllName);
+		goto CleanUp;
 	}
-	else
+
+	lpFlagArray = (LPBYTE)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, nrOfFunctions * sizeof(BYTE));
+	if (NULL == lpFlagArray)
 	{
-		printf("name of the DLL: [unknown] due to bad RVA.\n");
+		error = GetLastError();
+		fprintf(stderr, "PrintExportInfos: HeapAlloc() failed. GLE = 0x%x.\n", error);
+		goto CleanUp;
 	}
-	printf("nr of names: %d\n", nrOfNames);
-	printf("nr of functions: %d\n", nrOfFunctions);
-	printf("\n");
 
-	printf("4\n");
+	printf("\n%11s %-50s %-10s %-10s\n", "Ordinal", "Function name", "RVA", "FA");
 
-	printf("%11s %-50s %-10s %-10s\n", "Ordinal", "Function name", "RVA", "FA");
+	// functions exported by name
 	for (i = 0; i < nrOfNames; i++)
 	{
+		fOrdinal = 0;
+		fName = NULL;
+		fRva = 0;
+
 		__try
 		{
 			fOrdinal = functionOrdinals[i];
 			fName = OffsetFromRva(pPeFile, functionNames[i]);
 			fRva = functionAddresses[fOrdinal];
+
+			if (fName)
+			{
+				printf("%11u %-50s 0x%08x 0x%08x\n", fOrdinal, fName, fRva, FaFromRva(pPeFile, fRva));
+			}
+			else
+			{
+				printf("%11u %-50s 0x%08x 0x%08x\n", fOrdinal, "[unknown_function_name]", fRva, FaFromRva(pPeFile, fRva));
+			}
+
+			lpFlagArray[fOrdinal] = 1;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
-			printf("Cannot access function with index %i\n", i);
-			// continue execution - maybe the other ones will work
+			nInconsistencyCount += 1;
+			if (nInconsistencyCount >= MAX_INCONSISTENCY_COUNT_EXPORT)
+			{
+				printf("The export directory seems to be inconsistent or corrupted.\n");
+				goto CleanUp;
+			}
+		}
+	}
+
+	nInconsistencyCount = 0;
+
+	// functions exported by ordinal
+	for (i = 0; i < nrOfFunctions; i++)
+	{
+		if (lpFlagArray[i] != 0)
+		{
+			// function exported by name (already printed)
+			continue;
 		}
 
-		if (fName)
+		fRva = 0;
+
+		__try
 		{
-			printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, fName, fRva, FaFromRva(pPeFile, fRva));
+			fRva = functionAddresses[i];
 		}
-		else
+		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
-			printf("%11d %-50s 0x%08x 0x%08x\n", fOrdinal, "[unknown_function_name]", fRva, FaFromRva(pPeFile, fRva));
+			nInconsistencyCount += 1;
+			if (nInconsistencyCount >= MAX_INCONSISTENCY_COUNT_EXPORT)
+			{
+				printf("The export directory seems to be inconsistent or corrupted.\n");
+				goto CleanUp;
+			}
 		}
+
+		if (fRva == 0)
+		{
+			continue;
+		}
+
+		printf("%11u %-50s 0x%08x 0x%08x\n", i, "[exported by ordinal]", fRva, FaFromRva(pPeFile, fRva));
+	}
+
+CleanUp:
+	if (lpFlagArray != NULL)
+	{
+		HeapFree(GetProcessHeap(), 0, lpFlagArray);
+		lpFlagArray = NULL;
 	}
 
 	return ERROR_SUCCESS;
@@ -639,7 +731,7 @@ ImportDescriptorIsNull(
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
-		fprintf(stderr, "[ERR]: ImportDescriptorIsNull: invalid import descriptor - exception during memory access.\n");
+		printf("ImportDescriptorIsNull: invalid import descriptor - exception during memory access.\n");
 		return TRUE;
 	}
 
@@ -656,6 +748,8 @@ PrintImportInfos(
 	PIMAGE_IMPORT_BY_NAME		pImageImportByName;
 	LPSTR						dllName;
 	LPSTR						functionName;
+	DWORD						functionOrdinal;
+	DWORD						nInconsistencyCount;
 
 	if (NULL == pPeFile)
 	{
@@ -668,10 +762,17 @@ PrintImportInfos(
 		printf("The PE file has no import directory (size = 0).\n");
 		return ERROR_SUCCESS;
 	}
+
 	if (pPeFile->lpImportDescriptors == NULL)
 	{
-		printf("Null import directory file offset due to invalid or null RVA (size = %d)\n", pPeFile->importDescriptorsSize);
-		return ERROR_NULL_FILE_OFFSET;
+		printf("Null import directory file offset due to invalid or null RVA (size = %lu)\n", pPeFile->importDescriptorsSize);
+		return ERROR_INVALID_POINTER;
+	}
+
+	if (((PBYTE)pPeFile->lpImportDescriptors > pPeFile->pData + pPeFile->bcFileSize) || ((PBYTE)pPeFile->lpImportDescriptors < pPeFile->pData))
+	{
+		printf("PrintImportInfos: pointer to import descriptors is invalid.\n");
+		return ERROR_INVALID_POINTER;
 	}
 	
 	lpImportDescriptor = NULL;
@@ -679,59 +780,105 @@ PrintImportInfos(
 	pImageImportByName = NULL;
 	dllName = NULL;
 	functionName = NULL;
+	functionOrdinal = 0;
+	nInconsistencyCount = 0;
 
 	for (lpImportDescriptor = pPeFile->lpImportDescriptors; !ImportDescriptorIsNull(lpImportDescriptor); lpImportDescriptor++)
 	{
-		dllName = (LPSTR)OffsetFromRva(pPeFile, lpImportDescriptor->Name);
+		dllName = NULL;
+		__try
+		{
+			dllName = (LPSTR)OffsetFromRva(pPeFile, lpImportDescriptor->Name);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			printf("Exception while trying to access dll name.\n");
+		}
+
 		if (dllName)
 		{
-			printf("imported DLL module: %s\n", OffsetFromRva(pPeFile, lpImportDescriptor->Name));
+			printf("imported DLL module: %s\n", dllName);
 		}
 		else
 		{
 			printf("imported DLL module: [unknown name] due to bad RVA\n");
 		}
 
-		if (lpImportDescriptor->OriginalFirstThunk != 0)
+		lpThunk = NULL;
+		__try
 		{
-			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->OriginalFirstThunk);
-		}
-		else if (lpImportDescriptor->FirstThunk != 0)
-		{
-			lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->FirstThunk);
-		}
-		else
-		{
-			printf("\tBoth OriginalFirstThunk and FirstThunk RVAs are null.\n");
-			continue;
-		}
-
-		if (!lpThunk)
-		{
-			printf("\t(Original)FirstThunk - bad RVA.\n");
-			continue;
-		}
-
-		for (; lpThunk->u1.AddressOfData; lpThunk++)
-		{
-			if (lpThunk->u1.AddressOfData & IMAGE_ORDINAL_FLAG32)
+			if (lpImportDescriptor->OriginalFirstThunk != 0)
 			{
-				printf("\t(function exported by ordinal) ordinal number: %d\n", (lpThunk->u1.Ordinal & (IMAGE_ORDINAL_FLAG32 - 1)));
+				lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->OriginalFirstThunk);
 			}
-			else
+			else if (lpImportDescriptor->FirstThunk != 0)
 			{
-				functionName = (LPSTR)((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name;
-				if (functionName)
+				lpThunk = (PIMAGE_THUNK_DATA)OffsetFromRva(pPeFile, lpImportDescriptor->FirstThunk);
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			printf("Exception while trying to access (Original)FirstThunk\n");
+		}
+		
+		if (NULL == lpThunk)
+		{
+			nInconsistencyCount += 1;
+			if (nInconsistencyCount >= MAX_INCONSISTENCY_COUNT_IMPORT)
+			{
+				printf("The import directory seems to be inconsistent or corrupted.\n");
+				goto CleanUp;
+			}
+			printf("\tBoth OriginalFirstThunk and FirstThunk RVAs are invalid.\n");
+			continue;
+		}
+
+		__try
+		{
+			for (; lpThunk->u1.AddressOfData; lpThunk++)
+			{
+				if (lpThunk->u1.AddressOfData & IMAGE_ORDINAL_FLAG32)
 				{
-					printf("\t%s\n", ((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name);
+					functionOrdinal = 0;
+					__try
+					{
+						functionOrdinal = lpThunk->u1.Ordinal & (IMAGE_ORDINAL_FLAG32 - 1);
+						printf("\t(function imported by ordinal) ordinal number: %lu\n", functionOrdinal);
+					}
+					__except (EXCEPTION_EXECUTE_HANDLER)
+					{
+						printf("\t(function imported by ordinal) ordinal number: [cannot access]\n");
+					}
 				}
 				else
 				{
-					printf("\t[unknown function name] due to bad RVA\n");
+					functionName = NULL;
+					__try
+					{
+						functionName = (LPSTR)((PIMAGE_IMPORT_BY_NAME)OffsetFromRva(pPeFile, lpThunk->u1.AddressOfData))->Name;
+					}
+					__except (EXCEPTION_EXECUTE_HANDLER)
+					{
+						// do nothing
+					}
+
+					if (functionName)
+					{
+						printf("\t%s\n", functionName);
+					}
+					else
+					{
+						printf("\t[unknown function name] due to bad RVA\n");
+					}
 				}
 			}
 		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			printf("Exception while looping a thunk.\n");
+		}
 	}
 
+CleanUp:
 	return ERROR_SUCCESS;
 }

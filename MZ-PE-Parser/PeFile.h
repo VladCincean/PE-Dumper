@@ -8,18 +8,20 @@
 #define ERROR_INVALID_LFANEW		0x4003
 #define ERROR_NULL_FILE_OFFSET		0x4004
 #define ERROR_INVALID_STRUCT_ACCESS	0x4005
+#define ERROR_INVALID_POINTER		0x4006
 
-#define ERROR_IS_32BIT_MACHINE		0x4006
-#define ERROR_IS_64BIT_MACHINE		0x4007
+#define MAX_INCONSISTENCY_COUNT_SECTIONS	42
+#define MAX_INCONSISTENCY_COUNT_EXPORT		42
+#define MAX_INCONSISTENCY_COUNT_IMPORT		42
 
 typedef struct _PE_FILE
 {
 	PBYTE						pData;
-	DWORD						bcFileSizeHigh;
-	DWORD						bcFileSizeLow;
+	DWORD						bcFileSize;
 	PIMAGE_DOS_HEADER			pDosHeader;
 	PIMAGE_NT_HEADERS			pNtHeaders;
 	PIMAGE_SECTION_HEADER		pSectionHeaders;
+	WORD						optionalHeaderMagic;
 	PIMAGE_EXPORT_DIRECTORY		pExportDirectory;
 	DWORD						exportDirectorySize;
 	PIMAGE_IMPORT_DESCRIPTOR	lpImportDescriptors;
@@ -32,8 +34,7 @@ DWORD
 PeFileInit(
 	_Out_		PPE_FILE	pPeFile,
 	_In_		PBYTE		pData,
-	_In_		DWORD		bcFileSizeLow,
-	_In_opt_	DWORD		bcFileSizeHigh
+	_In_		DWORD		bcFileSize
 );
 
 /* ===================== addr ===================== */
