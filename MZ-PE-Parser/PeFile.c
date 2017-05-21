@@ -518,7 +518,7 @@ PrintSectionHeadersInfos(
 		printf("\t- virtual size:\t%lu bytes\n", pPeFile->pSectionHeaders[iSection].Misc.VirtualSize);
 		printf("\t- raw size:\t%lu bytes\n", pPeFile->pSectionHeaders[iSection].SizeOfRawData);
 
-		if (iSection >= MAX_INCONSISTENCY_COUNT_SECTIONS)
+		if (iSection > MAX_INCONSISTENCY_COUNT_SECTIONS)
 		{
 			printf(
 				"NumberOfSections (%d) seems to indicate inconsistent section headers. Only %d out of %d sections were shown.\n",
